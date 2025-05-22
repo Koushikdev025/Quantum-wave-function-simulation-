@@ -1,0 +1,126 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+# Grid setup
+Nx, Ny = 256, 256
+x = np.linspace(-1, 1, Nx)
+y = np.linspace(-1, 1, Ny)
+dx = x[1] - x[0]
+dy = y[1] - y[0]
+X, Y = np.meshgrid(x, y)
+
+# FFT grids
+kx = np.fft.fftfreq(Nx, d=dx) * 2 * np.pi
+ky = np.fft.fftfreq(Ny, d=dy) * 2 * np.pi
+KX, KY = np.meshgrid(kx, ky)
+K2 = KX**2 + KY**2
+
+# Wave packet parameters
+x0, y0 = -0.6, 0.0
+kx0, ky0 = 15.0, 0.0
+sigma = 0.1
+
+# Initial wavefunction
+def psi_0(x, y):
+    envelope = np.exp(-((x - x0)**2 + (y - y0)**2) / (2 * sigma**2))
+    phase = np.exp(1j * (kx0 * x + ky0 * y))
+    return envelope * phase
+
+Psi = psi_0(X, Y)
+
+# Potential barrier
+V0 = 50
+barrier_width = 0.05
+V = np.zeros_like(X)
+V[np.abs(X) < barrier_width] = V0
+
+# Time stepping
+dt = 0.001
+num_frames = 200
+
+# Precompute operators
+V_half_step = np.exp(-1j * V * dt / 2)
+T_full_step = np.exp(-1j * K2 * dt / 2)
+
+# FFT functions
+def fft2c(x): return np.fft.fft2(x)
+def ifft2c(x): return np.fft.ifft2(x)
+
+# Normalization helper
+def normalize(psi):
+    norm = np.sum(np.abs(psi)**2) * dx * dy
+    return psi / np.sqrt(norm)
+
+Psi = normalize(Psi)
+
+# Expectation value calculations
+def expectation_values(Psi):
+    prob_density = np.abs(Psi)**2
+    P_tot = np.sum(prob_density) * dx * dy
+
+    x_avg = np.sum(X * prob_density) * dx * dy
+    y_avg = np.sum(Y * prob_density) * dx * dy
+    x2_avg = np.sum(X**2 * prob_density) * dx * dy
+    y2_avg = np.sum(Y**2 * prob_density) * dx * dy
+
+    dx_val = np.sqrt(x2_avg - x_avg**2)
+    dy_val = np.sqrt(y2_avg - y_avg**2)
+
+    # Momentum space
+    Psi_k = fft2c(Psi)
+    Psi_k = np.fft.fftshift(Psi_k)
+    prob_k = np.abs(Psi_k)**2
+    prob_k /= np.sum(prob_k) * (dx * dy)
+
+    px_avg = np.sum(KX * prob_k) * dx * dy
+    py_avg = np.sum(KY * prob_k) * dx * dy
+    px2_avg = np.sum(KX**2 * prob_k) * dx * dy
+    py2_avg = np.sum(KY**2 * prob_k) * dx * dy
+
+    dpx = np.sqrt(px2_avg - px_avg**2)
+    dpy = np.sqrt(py2_avg - py_avg**2)
+
+    return {
+        "P": P_tot,
+        "x_avg": x_avg, "y_avg": y_avg,
+        "dx": dx_val, "dy": dy_val,
+        "px_avg": px_avg, "py_avg": py_avg,
+        "dpx": dpx, "dpy": dpy
+    }
+
+# Plot setup
+fig, ax = plt.subplots(figsize=(6, 5))
+prob_density = np.abs(Psi)**2
+img = ax.imshow(prob_density, extent=(-1, 1, -1, 1), origin='lower', cmap='plasma', vmin=0, vmax=0.2)
+cbar = fig.colorbar(img, ax=ax)
+cbar.set_label("Probability Density")
+title = ax.set_title("t = 0.000 s")
+
+# Animation update
+def update(frame):
+    global Psi
+    t = frame * dt
+
+    # Split-operator step
+    Psi = V_half_step * Psi
+    Psi_k = fft2c(Psi)
+    Psi_k = T_full_step * Psi_k
+    Psi = ifft2c(Psi_k)
+    Psi = V_half_step * Psi
+    Psi = normalize(Psi)
+
+    # Compute and print quantum observables
+    obs = expectation_values(Psi)
+    print(f"t = {t:.4f} s | ⟨x⟩ = {obs['x_avg']:.3f}, Δx = {obs['dx']:.3f}, "
+          f"⟨px⟩ = {obs['px_avg']:.3f}, Δpx = {obs['dpx']:.3f}, P = {obs['P']:.5f}")
+
+    # Update plot
+    prob_density = np.abs(Psi)**2
+    img.set_data(prob_density)
+    title.set_text(f"t = {t:.3f} s")
+    return [img, title]
+
+ani = FuncAnimation(fig, update, frames=num_frames, interval=40, blit=False)
+plt.tight_layout()
+plt.show()
